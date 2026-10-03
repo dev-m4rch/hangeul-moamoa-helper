@@ -41,16 +41,35 @@ const Vision = (() => {
   // 카드 왼쪽 절반(조각 미리보기)에서 조각을 읽는다. 반환: 조각 id, 못 읽으면 -1
   function readPiece(img, card) {
     const { width: w, data: d } = img;
-    const X0 = Math.round(card.x + card.w * 0.03), X1 = Math.round(card.x + card.w * 0.47);
-    const Y0 = Math.round(card.y + card.h * 0.04), Y1 = Math.round(card.y + card.h * 0.96);
-    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0;
-    for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) if (sat(d, (y * w + x) * 4)) {
-      n++;
-      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    // 카드 테두리(선택 중이면 노란 테두리가 생김)를 피하려고 안쪽만 본다
+    const X0 = Math.round(card.x + card.w * 0.06), X1 = Math.round(card.x + card.w * 0.46);
+    const Y0 = Math.round(card.y + card.h * 0.08), Y1 = Math.round(card.y + card.h * 0.92);
+    // 바탕색 = 영역에서 가장 흔한 색. 평소엔 흰색, 조각을 선택 중이면 노란색, 사용 완료면 파란색이다.
+    const hist = new Uint32Array(4096); let top = 0;
+    for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
+      const i = (y * w + x) * 4, k = (d[i] >> 4) << 8 | (d[i + 1] >> 4) << 4 | d[i + 2] >> 4;
+      if (++hist[k] > hist[top]) top = k;
     }
-    if (x1 < 0) return -1;
-    // "사용 완료" 카드는 카드 전체가 파란색이다 → 빈 칸. (가장 큰 조각도 이 영역의 20% 미만)
-    if (n * 2 > (X1 - X0) * (Y1 - Y0)) return -1;
+    const bg = [(top >> 8) * 16 + 8, (top >> 4 & 15) * 16 + 8, (top & 15) * 16 + 8];
+    // 조각 칸 = 채도가 높고 바탕색과도 확실히 다른 픽셀
+    const cell = i => sat(d, i) && Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 120;
+    // 조각의 테두리 상자. 카드 테두리 같은 가는 줄(폭 3px 이하)은 버리려고,
+    // 조각 색 픽셀이 3개 이상인 행(열)이 4줄 이상 이어진 구간만 인정한다.
+    const span = (len, count) => {
+      let lo = -1, hi = -1, run = 0;
+      for (let i = 0; i <= len; i++) {
+        if (i < len && count(i) >= 3) { run++; continue; }
+        if (run >= 4) { if (lo < 0) lo = i - run; hi = i - 1; }
+        run = 0;
+      }
+      return [lo, hi];
+    };
+    const [ry0, ry1] = span(Y1 - Y0, r => { let c = 0; for (let x = X0; x < X1; x++) if (cell(((Y0 + r) * w + x) * 4)) c++; return c; });
+    if (ry0 < 0) return -1;
+    const y0 = Y0 + ry0, y1 = Y0 + ry1;
+    const [rx0, rx1] = span(X1 - X0, c => { let n = 0; for (let y = y0; y <= y1; y++) if (cell((y * w + X0 + c) * 4)) n++; return n; });
+    if (rx0 < 0) return -1;
+    const x0 = X0 + rx0, x1 = X0 + rx1;
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
     // 칸 크기를 몰라도 되도록, 조각의 모든 방향에 대해 테두리 크기가 그 방향의 칸 수 비율과 맞는지 본다
     // 여러 개가 맞으면 칸 수가 가장 많은 격자를 고른다(예: ㅈ 의 3x3 테두리는 1칸짜리로도 읽힘)
@@ -63,7 +82,7 @@ const Vision = (() => {
       for (let r = 0; r < o.h && ok; r++) for (let c = 0; c < o.w && ok; c++) {
         let on = 0, all = 0; // 칸 가운데 절반 영역의 과반이 조각 색이면 채워진 칸
         for (let y = Math.round(y0 + (r + 0.25) * s); y < y0 + (r + 0.75) * s; y++)
-          for (let x = Math.round(x0 + (c + 0.25) * s); x < x0 + (c + 0.75) * s; x++) { all++; if (sat(d, (y * w + x) * 4)) on++; }
+          for (let x = Math.round(x0 + (c + 0.25) * s); x < x0 + (c + 0.75) * s; x++) { all++; if (cell((y * w + x) * 4)) on++; }
         if ((on * 2 > all) !== !!(o.masks[r] >> c & 1)) ok = false;
       }
       if (ok && o.w * o.h > bestCells) { best = p.id; bestCells = o.w * o.h; }
