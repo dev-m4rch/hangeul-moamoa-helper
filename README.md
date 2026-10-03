@@ -7,7 +7,7 @@
 설치할 것은 없습니다. `index.html` 파일 하나로 동작합니다.
 
 - **내려받아 열기**: 이 저장소에서 `index.html`을 내려받아(또는 `Code → Download ZIP`) 브라우저로 엽니다.
-- **GitHub Pages로 열기**: 저장소 `Settings → Pages`에서 Source를 `Deploy from a branch`, Branch를 `main` / `(root)`로 저장하면 `https://hyunjunjoo.github.io/hangeul-moamoa-helper/` 주소로 열립니다.
+- **GitHub Pages로 열기**: 저장소 `Settings → Pages`에서 Source를 `Deploy from a branch`, Branch를 `main` / `(root)`로 저장하면 `https://dev-m4rch.github.io/hangeul-moamoa-helper/` 주소로 열립니다.
 
 ## 플레이 방법
 
