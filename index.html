@@ -119,6 +119,12 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
           <label class="row"><input type="checkbox" id="dot"> 점 찍기 1개 함께 쓰기</label>
         </div>
         <p id="msg" class="sub" aria-live="polite"></p>
+        <div class="row">
+          <button id="cap">화면 인식 시작</button>
+          <button id="recap" hidden title="바꿔 뽑기를 썼거나 잘못 인식했을 때">지금 다시 인식</button>
+          <label class="row"><input type="checkbox" id="auto" checked> 인식되면 바로 자동 배치</label>
+        </div>
+        <p id="capmsg" class="sub" aria-live="polite">게임 화면을 공유하면 보유 조각 3개를 자동으로 골라 줍니다.</p>
       </section>
 
       <section>
@@ -318,6 +324,111 @@ const DEATH = 3000; // 조각 하나를 못 놓는 상황의 벌점(미리보기
 const Engine = { W, H, FULL, PIECES, fits, canPlace, place, evaluate, mobility, solve, WT };
 if (typeof module !== 'undefined') module.exports = Engine;
 
+// 화면 인식: 게임 화면 프레임(ImageData 모양 {width,height,data})에서 "보유 조각" 카드 3장을 찾고 조각을 읽는다.
+// 브라우저(<script>, engine.js 뒤)와 Node(require) 공용.
+// ponytail: 보유 조각만 읽는다. 게임판(블록·능력 아이콘) 인식은 블록이 놓인 화면 표본이 있어야 색 기준을 잡을 수 있음.
+const Vision = (() => {
+  const P = () => (typeof Engine !== 'undefined' ? Engine : require('./engine.js')).PIECES;
+  // 조각 칸(분홍·연두 등 채도 높은 색)인가
+  const sat = (d, i) => { const mx = Math.max(d[i], d[i + 1], d[i + 2]); return mx - Math.min(d[i], d[i + 1], d[i + 2]) > 70 && mx > 120; };
+
+  // 흰 카드 3장이 세로로 나란히 쌓인 곳을 찾는다. 반환: [{x,y,w,h} x3] 또는 null
+  function findCards(img) {
+    const g = 4, { width: w, height: h, data: d } = img, gw = (w / g) | 0, gh = (h / g) | 0;
+    const white = new Uint8Array(gw * gh);
+    for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+      const i = ((y * g + 2) * w + x * g + 2) * 4;
+      white[y * gw + x] = Math.min(d[i], d[i + 1], d[i + 2]) > 232 ? 1 : 0;
+    }
+    // 흰 영역을 덩어리로 묶어 카드 크기·비율인 것만 남긴다
+    const boxes = [], st = [];
+    for (let s = 0; s < white.length; s++) {
+      if (white[s] !== 1) continue;
+      let x0 = gw, y0 = gh, x1 = 0, y1 = 0, n = 0; st.push(s); white[s] = 2;
+      while (st.length) {
+        const k = st.pop(), x = k % gw, y = (k / gw) | 0; n++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x > 0 && white[k - 1] === 1) { white[k - 1] = 2; st.push(k - 1); }
+        if (x < gw - 1 && white[k + 1] === 1) { white[k + 1] = 2; st.push(k + 1); }
+        if (y > 0 && white[k - gw] === 1) { white[k - gw] = 2; st.push(k - gw); }
+        if (y < gh - 1 && white[k + gw] === 1) { white[k + gw] = 2; st.push(k + gw); }
+      }
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      if (bw >= 15 && bw <= 150 && bw / bh > 1.2 && bw / bh < 2.4 && n / (bw * bh) > 0.45) boxes.push({ x0, y0, bw, bh });
+    }
+    boxes.sort((a, b) => a.y0 - b.y0);
+    const near = (a, b) => Math.abs(a.x0 - b.x0) <= 2 && Math.abs(a.bw - b.bw) <= 3 && Math.abs(a.bh - b.bh) <= 3 &&
+      b.y0 - (a.y0 + a.bh) >= 0 && b.y0 - (a.y0 + a.bh) < a.bh * 0.5;
+    for (const a of boxes) for (const b of boxes) if (near(a, b)) for (const c of boxes) if (near(b, c))
+      return [a, b, c].map(o => ({ x: o.x0 * g, y: o.y0 * g, w: o.bw * g, h: o.bh * g }));
+    return null;
+  }
+
+  // 카드 왼쪽 절반(조각 미리보기)에서 조각을 읽는다.
+  // 반환: 조각 id / -2 = "사용 완료" 카드 / -1 = 못 읽음(마우스 포인터에 가려짐 등)
+  function readPiece(img, card) {
+    const { width: w, data: d } = img;
+    // 카드 테두리(선택 중이면 노란 테두리가 생김)를 피하려고 안쪽만 본다
+    const X0 = Math.round(card.x + card.w * 0.06), X1 = Math.round(card.x + card.w * 0.46);
+    const Y0 = Math.round(card.y + card.h * 0.08), Y1 = Math.round(card.y + card.h * 0.92);
+    // 바탕색 = 영역에서 가장 흔한 색. 평소엔 흰색, 조각을 선택 중이면 노란색, 사용 완료면 파란색이다.
+    const hist = new Uint32Array(4096); let top = 0;
+    for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
+      const i = (y * w + x) * 4, k = (d[i] >> 4) << 8 | (d[i + 1] >> 4) << 4 | d[i + 2] >> 4;
+      if (++hist[k] > hist[top]) top = k;
+    }
+    const bg = [(top >> 8) * 16 + 8, (top >> 4 & 15) * 16 + 8, (top & 15) * 16 + 8];
+    if (bg[2] - bg[0] > 80) return -2; // 파란 바탕 = "사용 완료" 카드
+    // 조각 칸 = 채도가 높고 바탕색과도 확실히 다른 픽셀
+    const cell = i => sat(d, i) && Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 120;
+    // 조각의 테두리 상자. 행(열)마다 조각 색 픽셀 수를 세어, 3개 이상인 줄이 이어진 구간을 찾는다.
+    // 칸 사이 틈(3px 이하)은 같은 구간으로 잇고, 4줄 미만의 가는 줄(카드 테두리)은 버린다.
+    // 구간이 여럿이면(선택 중인 카드의 짙은 노란 테두리 등) 미리보기 중심에 가장 가까운 것이 조각이다.
+    const span = (len, center, count) => {
+      const groups = []; let run = 0;
+      for (let i = 0; i <= len; i++) {
+        if (i < len && count(i) >= 3) { run++; continue; }
+        if (run >= 4) {
+          const g = groups[groups.length - 1], lo = i - run;
+          if (g && lo - g[1] <= 4) g[1] = i - 1; else groups.push([lo, i - 1]);
+        }
+        run = 0;
+      }
+      const dist = g => Math.max(g[0] - center, center - g[1], 0);
+      return groups.sort((p, q) => dist(p) - dist(q))[0] || null;
+    };
+    const ry = span(Y1 - Y0, card.y + card.h * 0.5 - Y0, r => { let c = 0; for (let x = X0; x < X1; x++) if (cell(((Y0 + r) * w + x) * 4)) c++; return c; });
+    if (!ry) return -1;
+    const y0 = Y0 + ry[0], y1 = Y0 + ry[1];
+    const rx = span(X1 - X0, card.x + card.w * 0.25 - X0, c => { let n = 0; for (let y = y0; y <= y1; y++) if (cell((y * w + X0 + c) * 4)) n++; return n; });
+    if (!rx) return -1;
+    const x0 = X0 + rx[0], x1 = X0 + rx[1];
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    // 칸 크기를 몰라도 되도록, 조각의 모든 방향에 대해 테두리 크기가 그 방향의 칸 수 비율과 맞는지 본다
+    // 여러 개가 맞으면 칸 수가 가장 많은 격자를 고른다(예: ㅈ 의 3x3 테두리는 1칸짜리로도 읽힘)
+    let best = -1, bestCells = 0;
+    for (const p of P()) for (const o of p.orients) {
+      // 칸 크기는 칸 수가 많은 쪽 변에서 구한다(칸 사이 틈 때문에 생기는 오차가 작음)
+      const s = o.w >= o.h ? bw / o.w : bh / o.h;
+      if (s < 4 || Math.abs(bw - s * o.w) > s * 0.35 || Math.abs(bh - s * o.h) > s * 0.35) continue;
+      // 칸 크기는 카드 폭의 약 7.2%로 일정하다. 이 검사가 없으면 1칸짜리를 2x2로 쪼개 읽거나(광택 때문에 ㄴ 으로 보임)
+      // ㄴ 을 큰 1칸으로 읽는 식으로 배율을 착각한다.
+      if (Math.abs(s / (card.w * 0.072) - 1) > 0.3) continue;
+      let ok = true;
+      for (let r = 0; r < o.h && ok; r++) for (let c = 0; c < o.w && ok; c++) {
+        let on = 0, all = 0; // 칸 가운데 절반 영역의 과반이 조각 색이면 채워진 칸
+        for (let y = Math.round(y0 + (r + 0.25) * s); y < y0 + (r + 0.75) * s; y++)
+          for (let x = Math.round(x0 + (c + 0.25) * s); x < x0 + (c + 0.75) * s; x++) { all++; if (cell((y * w + x) * 4)) on++; }
+        if ((on * 2 > all) !== !!(o.masks[r] >> c & 1)) ok = false;
+      }
+      if (ok && o.w * o.h > bestCells) { best = p.id; bestCells = o.w * o.h; }
+    }
+    return best;
+  }
+  return { findCards, readPiece };
+})();
+if (typeof module !== 'undefined') module.exports = Vision;
+
 </script>
 <script>
 const $ = id => document.getElementById(id);
@@ -464,5 +575,56 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.target.closest('input, summary')) { e.preventDefault(); $('go').click(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
 });
+
+// --- 화면 인식: 게임 화면을 공유받아 보유 조각 3개를 자동으로 담는다 ---
+let cap = null; // { video, canvas, timer, cards, prev, same, applied, sawUsed }
+const capSay = t => { $('capmsg').textContent = t; };
+function stopCapture() {
+  if (!cap) return;
+  clearInterval(cap.timer); cap.video.srcObject?.getTracks().forEach(t => t.stop()); cap = null;
+  $('cap').textContent = '화면 인식 시작'; $('recap').hidden = true; capSay('화면 인식을 껐습니다.');
+}
+async function startCapture() {
+  if (!navigator.mediaDevices?.getDisplayMedia) return capSay('이 환경에서는 화면 공유를 쓸 수 없습니다. GitHub Pages 주소나 내려받은 index.html 을 PC 브라우저로 열어 주세요.');
+  let stream;
+  try { stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false }); }
+  catch { return capSay('화면 공유가 취소되었거나 허용되지 않았습니다.'); }
+  const video = document.createElement('video'); video.muted = true; video.srcObject = stream;
+  try { await video.play(); } catch { stream.getTracks().forEach(t => t.stop()); return capSay('공유한 화면을 읽지 못했습니다.'); }
+  stream.getVideoTracks()[0].onended = stopCapture; // 브라우저의 "공유 중지"
+  cap = { video, canvas: document.createElement('canvas'), timer: setInterval(capTick, 500) };
+  $('cap').textContent = '화면 인식 끄기'; $('recap').hidden = false; capSay('보유 조각을 찾는 중…');
+}
+function capTick() {
+  const v = cap.video, w = v.videoWidth, h = v.videoHeight;
+  if (!w || $('go').disabled) return; // 아직 프레임이 없거나 계산 중
+  cap.canvas.width = w; cap.canvas.height = h;
+  const ctx = cap.canvas.getContext('2d', { willReadFrequently: true }); ctx.drawImage(v, 0, 0);
+  const img = ctx.getImageData(0, 0, w, h);
+  let ids = cap.cards ? cap.cards.map(c => Vision.readPiece(img, c)) : [-1, -1, -1];
+  if (ids.every(i => i < 0)) { // 카드 위치를 모르거나 창이 움직였을 수 있음 → 다시 찾기(못 찾으면 기존 위치 유지)
+    const found = Vision.findCards(img);
+    if (found) { cap.cards = found; ids = found.map(c => Vision.readPiece(img, c)); }
+    else if (!cap.cards) return capSay('보유 조각을 찾는 중… 한글 모아모아 창의 "보유 조각" 3칸이 모두 보이게 해 주세요.');
+  }
+  // 새 턴 판정: "사용 완료" 카드를 본 뒤에 조각 3개가 다시 보이면 새 턴이다.
+  // 마우스 포인터에 가려 못 읽은 것(-1)은 아무 일도 아닌 것으로 친다.
+  if (ids.includes(-2)) cap.sawUsed = true;
+  const key = ids.join(',');
+  cap.same = key === cap.prev ? cap.same + 1 : 1; cap.prev = key;
+  if (ids.some(i => i < 0)) return capSay(ids.every(i => i === -2) ? '조각을 모두 사용했습니다. 새 조각 3개가 나오면 자동으로 담습니다.'
+    : ids.includes(-1) ? '조각이 가려져 있습니다.' : '조각을 놓는 중… 새 조각 3개가 나오면 자동으로 담습니다.');
+  // 사용 완료를 본 적이 없으면 같은 턴이다. 조각이 달라 보여도 포인터에 일부가 가려진 오인식일 수 있으므로 무시한다.
+  // (바꿔 뽑기로 조각이 실제로 바뀐 경우는 "지금 다시 인식" 버튼으로 받는다)
+  if (cap.applied && !cap.sawUsed) return;
+  if (cap.same < 2) return; // 두 번 연속 같은 결과일 때만 믿는다
+  cap.applied = key; cap.sawUsed = false;
+  S.hand = ids; render();
+  capSay('인식한 조각: ' + ids.map(i => PIECES[i].name).join(' '));
+  if ($('auto').checked) run([...S.hand], true);
+}
+$('cap').onclick = () => (cap ? stopCapture() : startCapture());
+$('recap').onclick = () => { if (cap) { cap.applied = null; cap.prev = null; capSay('다시 인식하는 중…'); } };
+
 render();
 </script>

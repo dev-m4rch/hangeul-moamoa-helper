@@ -114,6 +114,12 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
           <label class="row"><input type="checkbox" id="dot"> 점 찍기 1개 함께 쓰기</label>
         </div>
         <p id="msg" class="sub" aria-live="polite"></p>
+        <div class="row">
+          <button id="cap">화면 인식 시작</button>
+          <button id="recap" hidden title="바꿔 뽑기를 썼거나 잘못 인식했을 때">지금 다시 인식</button>
+          <label class="row"><input type="checkbox" id="auto" checked> 인식되면 바로 자동 배치</label>
+        </div>
+        <p id="capmsg" class="sub" aria-live="polite">게임 화면을 공유하면 보유 조각 3개를 자동으로 골라 줍니다.</p>
       </section>
 
       <section>
@@ -139,6 +145,7 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
 
 <script>
 /*ENGINE*/
+/*VISION*/
 </script>
 <script>
 const $ = id => document.getElementById(id);
@@ -285,5 +292,56 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.target.closest('input, summary')) { e.preventDefault(); $('go').click(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
 });
+
+// --- 화면 인식: 게임 화면을 공유받아 보유 조각 3개를 자동으로 담는다 ---
+let cap = null; // { video, canvas, timer, cards, prev, same, applied, sawUsed }
+const capSay = t => { $('capmsg').textContent = t; };
+function stopCapture() {
+  if (!cap) return;
+  clearInterval(cap.timer); cap.video.srcObject?.getTracks().forEach(t => t.stop()); cap = null;
+  $('cap').textContent = '화면 인식 시작'; $('recap').hidden = true; capSay('화면 인식을 껐습니다.');
+}
+async function startCapture() {
+  if (!navigator.mediaDevices?.getDisplayMedia) return capSay('이 환경에서는 화면 공유를 쓸 수 없습니다. GitHub Pages 주소나 내려받은 index.html 을 PC 브라우저로 열어 주세요.');
+  let stream;
+  try { stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false }); }
+  catch { return capSay('화면 공유가 취소되었거나 허용되지 않았습니다.'); }
+  const video = document.createElement('video'); video.muted = true; video.srcObject = stream;
+  try { await video.play(); } catch { stream.getTracks().forEach(t => t.stop()); return capSay('공유한 화면을 읽지 못했습니다.'); }
+  stream.getVideoTracks()[0].onended = stopCapture; // 브라우저의 "공유 중지"
+  cap = { video, canvas: document.createElement('canvas'), timer: setInterval(capTick, 500) };
+  $('cap').textContent = '화면 인식 끄기'; $('recap').hidden = false; capSay('보유 조각을 찾는 중…');
+}
+function capTick() {
+  const v = cap.video, w = v.videoWidth, h = v.videoHeight;
+  if (!w || $('go').disabled) return; // 아직 프레임이 없거나 계산 중
+  cap.canvas.width = w; cap.canvas.height = h;
+  const ctx = cap.canvas.getContext('2d', { willReadFrequently: true }); ctx.drawImage(v, 0, 0);
+  const img = ctx.getImageData(0, 0, w, h);
+  let ids = cap.cards ? cap.cards.map(c => Vision.readPiece(img, c)) : [-1, -1, -1];
+  if (ids.every(i => i < 0)) { // 카드 위치를 모르거나 창이 움직였을 수 있음 → 다시 찾기(못 찾으면 기존 위치 유지)
+    const found = Vision.findCards(img);
+    if (found) { cap.cards = found; ids = found.map(c => Vision.readPiece(img, c)); }
+    else if (!cap.cards) return capSay('보유 조각을 찾는 중… 한글 모아모아 창의 "보유 조각" 3칸이 모두 보이게 해 주세요.');
+  }
+  // 새 턴 판정: "사용 완료" 카드를 본 뒤에 조각 3개가 다시 보이면 새 턴이다.
+  // 마우스 포인터에 가려 못 읽은 것(-1)은 아무 일도 아닌 것으로 친다.
+  if (ids.includes(-2)) cap.sawUsed = true;
+  const key = ids.join(',');
+  cap.same = key === cap.prev ? cap.same + 1 : 1; cap.prev = key;
+  if (ids.some(i => i < 0)) return capSay(ids.every(i => i === -2) ? '조각을 모두 사용했습니다. 새 조각 3개가 나오면 자동으로 담습니다.'
+    : ids.includes(-1) ? '조각이 가려져 있습니다.' : '조각을 놓는 중… 새 조각 3개가 나오면 자동으로 담습니다.');
+  // 사용 완료를 본 적이 없으면 같은 턴이다. 조각이 달라 보여도 포인터에 일부가 가려진 오인식일 수 있으므로 무시한다.
+  // (바꿔 뽑기로 조각이 실제로 바뀐 경우는 "지금 다시 인식" 버튼으로 받는다)
+  if (cap.applied && !cap.sawUsed) return;
+  if (cap.same < 2) return; // 두 번 연속 같은 결과일 때만 믿는다
+  cap.applied = key; cap.sawUsed = false;
+  S.hand = ids; render();
+  capSay('인식한 조각: ' + ids.map(i => PIECES[i].name).join(' '));
+  if ($('auto').checked) run([...S.hand], true);
+}
+$('cap').onclick = () => (cap ? stopCapture() : startCapture());
+$('recap').onclick = () => { if (cap) { cap.applied = null; cap.prev = null; capSay('다시 인식하는 중…'); } };
+
 render();
 </script>
