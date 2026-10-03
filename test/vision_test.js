@@ -52,7 +52,7 @@ for (const p of PIECES) for (const o of p.orients) {
 {
   const used = png(path.join(__dirname, 'used.png'));
   assert.equal(V.findCards(used), null, '사용 완료 카드를 조각 카드로 찾음');
-  for (const y of [52, 160]) assert.equal(V.readPiece(used, { x: 12, y, w: 176, h: 100 }), -1, '사용 완료 카드를 조각으로 읽음');
+  for (const y of [52, 160]) assert.equal(V.readPiece(used, { x: 12, y, w: 176, h: 100 }), -2, '사용 완료 카드를 사용 완료로 읽지 못함');
 }
 // 놓으려고 선택 중인 카드(노란 배경)에서도 조각을 그대로 읽어야 한다 (실제 화면 캡처, ㄴ 3칸)
 {
@@ -67,6 +67,15 @@ for (const [file, name, card] of [
   const img = png(path.join(__dirname, file + '.png'));
   for (const [dx, dy, dw] of [[0, 0, 0], [4, -3, -6], [-4, 3, 6], [3, 4, -4]]) // 카드 위치가 몇 픽셀 어긋나도 같아야 함
     assert.equal(PIECES[V.readPiece(img, { x: card.x + dx, y: card.y + dy, w: card.w + dw, h: card.h })]?.name, name, `${file} ${[dx, dy, dw]}`);
+}
+// 마우스 포인터가 조각을 가린 카드(실제 화면 캡처, ㅋ 6칸): 못 읽음(-1)이거나 ㅋ 이어야 하고,
+// 다른 조각이나 "사용 완료"(-2)로 읽으면 안 된다
+{
+  const img = png(path.join(__dirname, 'covered.png'));
+  for (const [dx, dy] of [[0, 0], [4, 3], [-4, -3]]) {
+    const id = V.readPiece(img, { x: 12 + dx, y: 8 + dy, w: 188, h: 108 });
+    assert(id === -1 || PIECES[id].name === 'ㅋ', '가려진 카드를 잘못 읽음: ' + id);
+  }
 }
 // 조각이 없는 화면에서는 아무것도 찾지 않는다
 assert.equal(V.findCards({ width: 400, height: 300, data: new Uint8Array(400 * 300 * 4).fill(255) }), null);

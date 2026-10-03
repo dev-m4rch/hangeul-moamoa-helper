@@ -38,7 +38,8 @@ const Vision = (() => {
     return null;
   }
 
-  // 카드 왼쪽 절반(조각 미리보기)에서 조각을 읽는다. 반환: 조각 id, 못 읽으면 -1
+  // 카드 왼쪽 절반(조각 미리보기)에서 조각을 읽는다.
+  // 반환: 조각 id / -2 = "사용 완료" 카드 / -1 = 못 읽음(마우스 포인터에 가려짐 등)
   function readPiece(img, card) {
     const { width: w, data: d } = img;
     // 카드 테두리(선택 중이면 노란 테두리가 생김)를 피하려고 안쪽만 본다
@@ -51,6 +52,7 @@ const Vision = (() => {
       if (++hist[k] > hist[top]) top = k;
     }
     const bg = [(top >> 8) * 16 + 8, (top >> 4 & 15) * 16 + 8, (top & 15) * 16 + 8];
+    if (bg[2] - bg[0] > 80) return -2; // 파란 바탕 = "사용 완료" 카드
     // 조각 칸 = 채도가 높고 바탕색과도 확실히 다른 픽셀
     const cell = i => sat(d, i) && Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 120;
     // 조각의 테두리 상자. 행(열)마다 조각 색 픽셀 수를 세어, 3개 이상인 줄이 이어진 구간을 찾는다.
