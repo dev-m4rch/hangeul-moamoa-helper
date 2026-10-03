@@ -114,6 +114,11 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
           <label class="row"><input type="checkbox" id="dot"> 점 찍기 1개 함께 쓰기</label>
         </div>
         <p id="msg" class="sub" aria-live="polite"></p>
+        <div class="row">
+          <button id="cap">화면 인식 시작</button>
+          <label class="row"><input type="checkbox" id="auto"> 인식되면 바로 자동 배치</label>
+        </div>
+        <p id="capmsg" class="sub" aria-live="polite">게임 화면을 공유하면 보유 조각 3개를 자동으로 골라 줍니다.</p>
       </section>
 
       <section>
@@ -139,6 +144,7 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
 
 <script>
 /*ENGINE*/
+/*VISION*/
 </script>
 <script>
 const $ = id => document.getElementById(id);
@@ -285,5 +291,49 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.target.closest('input, summary')) { e.preventDefault(); $('go').click(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
 });
+
+// --- 화면 인식: 게임 화면을 공유받아 보유 조각 3개를 자동으로 담는다 ---
+let cap = null; // { video, timer, cards, prev, applied, sawGap }
+const capSay = t => { $('capmsg').textContent = t; };
+function stopCapture() {
+  if (!cap) return;
+  clearInterval(cap.timer); cap.video.srcObject?.getTracks().forEach(t => t.stop()); cap = null;
+  $('cap').textContent = '화면 인식 시작'; capSay('화면 인식을 껐습니다.');
+}
+async function startCapture() {
+  if (!navigator.mediaDevices?.getDisplayMedia) return capSay('이 환경에서는 화면 공유를 쓸 수 없습니다. GitHub Pages 주소나 내려받은 index.html 을 PC 브라우저로 열어 주세요.');
+  let stream;
+  try { stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false }); }
+  catch { return capSay('화면 공유가 취소되었거나 허용되지 않았습니다.'); }
+  const video = document.createElement('video'); video.muted = true; video.srcObject = stream;
+  try { await video.play(); } catch { stream.getTracks().forEach(t => t.stop()); return capSay('공유한 화면을 읽지 못했습니다.'); }
+  stream.getVideoTracks()[0].onended = stopCapture; // 브라우저의 "공유 중지"
+  cap = { video, canvas: document.createElement('canvas'), timer: setInterval(capTick, 500) };
+  $('cap').textContent = '화면 인식 끄기'; capSay('보유 조각을 찾는 중…');
+}
+function capTick() {
+  const v = cap.video, w = v.videoWidth, h = v.videoHeight;
+  if (!w || $('go').disabled) return; // 아직 프레임이 없거나 계산 중
+  cap.canvas.width = w; cap.canvas.height = h;
+  const ctx = cap.canvas.getContext('2d', { willReadFrequently: true }); ctx.drawImage(v, 0, 0);
+  const img = ctx.getImageData(0, 0, w, h);
+  let ids = cap.cards ? cap.cards.map(c => Vision.readPiece(img, c)) : [-1, -1, -1];
+  if (ids.every(i => i < 0)) { // 카드 위치를 모르거나 창이 움직였을 수 있음 → 다시 찾기
+    cap.cards = Vision.findCards(img);
+    if (!cap.cards) { cap.sawGap = true; return capSay('보유 조각을 찾는 중… 한글 모아모아 창의 "보유 조각"이 가려지지 않게 해 주세요.'); }
+    ids = cap.cards.map(c => Vision.readPiece(img, c));
+  }
+  const key = ids.join(','), stable = key === cap.prev; cap.prev = key;
+  if (!stable) return; // 두 번 연속 같은 결과일 때만 믿는다(애니메이션·드래그 중 오인식 방지)
+  if (ids.some(i => i < 0)) { cap.sawGap = true; return capSay('조각을 놓는 중… 새 조각 3개가 나오면 자동으로 담습니다.'); }
+  // 같은 3개를 이미 담았고 그 사이 빈 슬롯을 본 적이 없으면 같은 턴이다
+  if (key === cap.applied && !cap.sawGap) return;
+  cap.applied = key; cap.sawGap = false;
+  S.hand = ids; render();
+  capSay('인식한 조각: ' + ids.map(i => PIECES[i].name).join(' '));
+  if ($('auto').checked) run([...S.hand], true);
+}
+$('cap').onclick = () => (cap ? stopCapture() : startCapture());
+
 render();
 </script>
