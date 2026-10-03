@@ -48,6 +48,12 @@ for (const p of PIECES) for (const o of p.orients) {
   o.masks.forEach((m, r) => { for (let c = 0; c < o.w; c++) if (m >> c & 1) fill(px + c * 12, py + r * 12, px + c * 12 + 11, py + r * 12 + 11, [240, 90, 170]); });
   assert.equal(V.readPiece({ width: w, height: h, data }, card), p.id, `${p.name} 방향 ${p.orients.indexOf(o)}`);
 }
+// "사용 완료" 카드(전체가 파란색)는 조각이 아니라 빈 칸으로 읽어야 한다 (실제 화면 캡처)
+{
+  const used = png(path.join(__dirname, 'used.png'));
+  assert.equal(V.findCards(used), null, '사용 완료 카드를 조각 카드로 찾음');
+  for (const y of [52, 160]) assert.equal(V.readPiece(used, { x: 12, y, w: 176, h: 100 }), -1, '사용 완료 카드를 조각으로 읽음');
+}
 // 조각이 없는 화면에서는 아무것도 찾지 않는다
 assert.equal(V.findCards({ width: 400, height: 300, data: new Uint8Array(400 * 300 * 4).fill(255) }), null);
 console.log('화면 인식 검사 통과');

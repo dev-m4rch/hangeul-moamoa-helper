@@ -116,7 +116,7 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
         <p id="msg" class="sub" aria-live="polite"></p>
         <div class="row">
           <button id="cap">화면 인식 시작</button>
-          <label class="row"><input type="checkbox" id="auto"> 인식되면 바로 자동 배치</label>
+          <label class="row"><input type="checkbox" id="auto" checked> 인식되면 바로 자동 배치</label>
         </div>
         <p id="capmsg" class="sub" aria-live="polite">게임 화면을 공유하면 보유 조각 3개를 자동으로 골라 줍니다.</p>
       </section>
@@ -320,7 +320,7 @@ function capTick() {
   let ids = cap.cards ? cap.cards.map(c => Vision.readPiece(img, c)) : [-1, -1, -1];
   if (ids.every(i => i < 0)) { // 카드 위치를 모르거나 창이 움직였을 수 있음 → 다시 찾기
     cap.cards = Vision.findCards(img);
-    if (!cap.cards) { cap.sawGap = true; return capSay('보유 조각을 찾는 중… 한글 모아모아 창의 "보유 조각"이 가려지지 않게 해 주세요.'); }
+    if (!cap.cards) { cap.sawGap = true; return capSay(cap.applied ? '조각을 모두 사용했습니다. 새 조각 3개가 나오면 자동으로 담습니다.' : '보유 조각을 찾는 중… 한글 모아모아 창의 "보유 조각" 3칸이 모두 보이게 해 주세요.'); }
     ids = cap.cards.map(c => Vision.readPiece(img, c));
   }
   const key = ids.join(','), stable = key === cap.prev; cap.prev = key;

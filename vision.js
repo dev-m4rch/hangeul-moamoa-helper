@@ -43,11 +43,14 @@ const Vision = (() => {
     const { width: w, data: d } = img;
     const X0 = Math.round(card.x + card.w * 0.03), X1 = Math.round(card.x + card.w * 0.47);
     const Y0 = Math.round(card.y + card.h * 0.04), Y1 = Math.round(card.y + card.h * 0.96);
-    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0;
     for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) if (sat(d, (y * w + x) * 4)) {
+      n++;
       if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
     }
     if (x1 < 0) return -1;
+    // "사용 완료" 카드는 카드 전체가 파란색이다 → 빈 칸. (가장 큰 조각도 이 영역의 20% 미만)
+    if (n * 2 > (X1 - X0) * (Y1 - Y0)) return -1;
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
     // 칸 크기를 몰라도 되도록, 조각의 모든 방향에 대해 테두리 크기가 그 방향의 칸 수 비율과 맞는지 본다
     // 여러 개가 맞으면 칸 수가 가장 많은 격자를 고른다(예: ㅈ 의 3x3 테두리는 1칸짜리로도 읽힘)
