@@ -43,7 +43,7 @@ section { display: flex; flex-direction: column; gap: 8px }
 .grid i.icon::after { content: "◎"; position: absolute; color: var(--clear); font-size: 13px; text-shadow: 0 0 2px #000 }
 .grid i.cl { outline: 2px solid var(--clear); outline-offset: -1px }
 #board i { cursor: pointer }
-.mini { width: 104px; flex: none; gap: 1px; padding: 3px; border-radius: 6px }
+.mini { width: 96px; max-width: 100%; flex: none; gap: 1px; padding: 3px; border-radius: 6px }
 .mini i { border-radius: 1px; font-size: 0 }
 
 button, .seg label { font: 500 13px/1 var(--body); padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer }
@@ -69,8 +69,15 @@ kbd { font: 500 11px var(--body); border: 1px solid var(--line); border-radius: 
 .slot .shape b.x { background: var(--accent) }
 
 #msg { min-height: 21px; margin: 0 } #msg.warn { color: var(--warn); font-weight: 600 }
-.steps { display: flex; flex-wrap: wrap; gap: 14px }
-.step { display: flex; gap: 10px; align-items: flex-start; min-width: 0 }
+.steps { display: flex; flex-direction: column; gap: 14px }
+/* 한 턴 = 한 줄. 조각 수만큼 같은 폭의 칸으로 나눠 한 줄에 모두 보이게 한다 */
+.turn { display: flex; flex-direction: column; gap: 6px }
+.turn + .turn { border-top: 1px solid var(--line); padding-top: 12px }
+.turn .when { margin: 0; font-size: 12px; color: var(--muted) }
+.turn .row3 { display: grid; gap: 10px }
+.turn.old .grid, .turn.old .shape { opacity: .7 }
+.step { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; min-width: 0 }
+.step > div:last-child { flex: 1 1 84px; min-width: 0 }
 .step p { margin: 0 } .step .n { font: 400 15px var(--display) } .step .d { color: var(--muted); font-size: 12px }
 .step .shape { margin: 6px 0 0; width: max-content }
 .step .shape b.x { background: var(--accent) }
@@ -117,7 +124,7 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
 
       <section>
         <h2>놓는 순서</h2>
-        <div class="steps" id="steps"><p class="sub">자동 배치를 누르면 조각별 위치와 방향이 여기에 나옵니다.</p></div>
+        <div class="steps" id="steps"></div>
       </section>
 
       <details>
@@ -137,14 +144,14 @@ details { color: var(--muted) } details p { margin: 6px 0 0; max-width: 65ch }
 const $ = id => document.getElementById(id);
 // 상태. 첫 화면은 빈 판 + 빈 손패(게임 시작 상태)
 let S = { board: new Array(H).fill(0), icons: [], hand: [], total: 0, last: [] };
-let steps = [], undoStack = [];
+let hist = [], undoStack = []; // hist: 턴별 놓는 순서, 최신이 맨 앞, 최대 5턴
 try { const s = JSON.parse(localStorage.getItem('moamoa') || 'null'); if (s && s.board?.length === H) S = { ...S, ...s, last: [] }; } catch {}
 const save = () => { try { localStorage.setItem('moamoa', JSON.stringify(S)); } catch {} };
-const snap = () => { undoStack.push(JSON.stringify({ S, steps: steps.map(s => ({ ...s, orient: null, oi: PIECES[s.piece].orients.indexOf(s.orient) })) })); if (undoStack.length > 200) undoStack.shift(); };
+const snap = () => { undoStack.push(JSON.stringify({ S, hist: hist.map(t => t.map(s => ({ ...s, orient: null, oi: PIECES[s.piece].orients.indexOf(s.orient) }))) })); if (undoStack.length > 200) undoStack.shift(); };
 function undo() {
   if (!undoStack.length) return say('되돌릴 것이 없습니다.');
   const u = JSON.parse(undoStack.pop());
-  S = u.S; steps = u.steps.map(s => ({ ...s, orient: PIECES[s.piece].orients[s.oi] }));
+  S = u.S; hist = u.hist.map(t => t.map(s => ({ ...s, orient: PIECES[s.piece].orients[s.oi] })));
   say('되돌렸습니다.'); render();
 }
 const say = (t, warn) => { $('msg').textContent = t; $('msg').className = warn ? 'sub warn' : 'sub'; };
@@ -180,20 +187,27 @@ function render() {
     hand.append(b);
   }
   const st = $('steps');
-  if (steps.length) {
+  if (hist.length) {
     st.innerHTML = '';
-    steps.forEach((s, i) => {
-      const div = document.createElement('div'); div.className = 'step';
-      const g = document.createElement('div'); g.className = 'grid mini';
-      drawGrid(g, s.before, Object.fromEntries(cellsOf(s).map(k => [k, i + 1])), s.cleared);
-      const p = PIECES[s.piece], t = document.createElement('div');
-      t.innerHTML = `<p class="n">${i + 1}. ${s.dot ? '점 찍기' : p.name + ' ' + p.size + '칸'}</p>
-        <p class="d">위에서 ${s.r + 1}번째 줄, 왼쪽에서 ${s.c + 1}번째 칸부터</p>
-        <p class="d">${s.dot ? '' : '아래 모양이 되게 회전·반전<br>'}${s.cleared.length ? `<strong>${s.cleared.length}줄 삭제 +${300 * s.cleared.length ** 2}</strong>` : '삭제 없음'}</p>`;
-      if (!s.dot) t.append(shapeEl(orientRows(s.orient)));
-      div.append(g, t); st.append(div);
+    hist.forEach((steps, t) => {
+      const turn = document.createElement('div'); turn.className = 'turn' + (t ? ' old' : '');
+      const row = document.createElement('div'); row.className = 'row3';
+      row.style.gridTemplateColumns = `repeat(${steps.length}, minmax(0, 1fr))`;
+      steps.forEach((s, i) => {
+        const div = document.createElement('div'); div.className = 'step';
+        const g = document.createElement('div'); g.className = 'grid mini';
+        drawGrid(g, s.before, Object.fromEntries(cellsOf(s).map(k => [k, i + 1])), s.cleared);
+        const p = PIECES[s.piece], d = document.createElement('div');
+        d.innerHTML = `<p class="n">${i + 1}. ${s.dot ? '점 찍기' : p.name + ' ' + p.size + '칸'}</p>
+          <p class="d">위에서 ${s.r + 1}번째 줄, 왼쪽에서 ${s.c + 1}번째 칸부터</p>
+          <p class="d">${s.cleared.length ? `<strong>${s.cleared.length}줄 삭제 +${300 * s.cleared.length ** 2}</strong>` : '삭제 없음'}</p>`;
+        if (!s.dot) d.append(shapeEl(orientRows(s.orient)));
+        div.append(g, d); row.append(div);
+      });
+      turn.innerHTML = `<p class="when">${t ? t + '턴 전' : '이번 턴'}</p>`;
+      turn.append(row); st.append(turn);
     });
-  }
+  } else st.innerHTML = '<p class="sub">자동 배치를 누르면 조각별 위치와 방향이 여기에 나옵니다. 최근 5턴까지 남습니다.</p>';
   save();
 }
 
@@ -239,7 +253,7 @@ function run(hand, fromSlots) {
     $('go').disabled = false;
     if (!r.placed) return say(`${hand.map(i => PIECES[i].name).join(' ')} 조각을 놓을 자리가 없습니다. 바꿔 뽑기나 점 찍기를 쓰세요.`, true);
     snap();
-    steps = r.steps;
+    hist = [r.steps, ...hist].slice(0, 5);
     const clearedRows = r.steps.flatMap(s => s.cleared);
     const real = r.steps.reduce((a, s) => a + (s.dot ? 0 : PIECES[s.piece].size) + 300 * s.cleared.length ** 2, 0);
     S.board = r.board; S.total += real;
@@ -266,7 +280,7 @@ function run(hand, fromSlots) {
 }
 $('go').onclick = () => run([...S.hand], true);
 $('undo').onclick = undo;
-$('clear').onclick = () => { snap(); S.board = new Array(H).fill(0); S.icons = []; S.hand = []; S.last = []; S.total = 0; steps = []; $('steps').innerHTML = '<p class="sub">판을 비웠습니다.</p>'; say(''); render(); };
+$('clear').onclick = () => { snap(); S.board = new Array(H).fill(0); S.icons = []; S.hand = []; S.last = []; S.total = 0; hist = []; say(''); render(); };
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.target.closest('input, summary')) { e.preventDefault(); $('go').click(); }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
