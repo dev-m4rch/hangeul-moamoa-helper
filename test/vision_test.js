@@ -60,6 +60,14 @@ for (const p of PIECES) for (const o of p.orients) {
   for (const card of [{ x: 9, y: 42, w: 182, h: 97 }, { x: 14, y: 46, w: 166, h: 90 }, { x: 5, y: 38, w: 190, h: 104 }])
     assert.equal(PIECES[V.readPiece(sel, card)]?.name, 'ㄴ', '선택 중인 카드: ' + JSON.stringify(card));
 }
+// 1칸(·)과 ㄴ 을 서로 바꿔 읽지 않아야 한다. 흰 카드와 선택 중(노란) 카드 각각의 실제 화면 캡처.
+for (const [file, name, card] of [
+  ['dot_white', '·', { x: 36, y: 16, w: 188, h: 107 }], ['dot_sel', '·', { x: 18, y: 15, w: 188, h: 108 }],
+  ['n_white', 'ㄴ', { x: 15, y: 19, w: 186, h: 107 }], ['n_sel', 'ㄴ', { x: 23, y: 12, w: 188, h: 108 }]]) {
+  const img = png(path.join(__dirname, file + '.png'));
+  for (const [dx, dy, dw] of [[0, 0, 0], [4, -3, -6], [-4, 3, 6], [3, 4, -4]]) // 카드 위치가 몇 픽셀 어긋나도 같아야 함
+    assert.equal(PIECES[V.readPiece(img, { x: card.x + dx, y: card.y + dy, w: card.w + dw, h: card.h })]?.name, name, `${file} ${[dx, dy, dw]}`);
+}
 // 조각이 없는 화면에서는 아무것도 찾지 않는다
 assert.equal(V.findCards({ width: 400, height: 300, data: new Uint8Array(400 * 300 * 4).fill(255) }), null);
 console.log('화면 인식 검사 통과');
